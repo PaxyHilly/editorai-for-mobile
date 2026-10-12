@@ -482,14 +482,49 @@ void settingText(const char* label, const std::string& id,
         std::string cur = editoraiGetStr(id.c_str());
         snprintf(tb.buf.data(), tb.buf.size(), "%s", cur.c_str());
     }
-    ImGui::SetNextItemWidth(std::min(dp(280.f), ImGui::GetContentRegionAvail().x));
-    ImGui::InputTextWithHint(fmt::format("{}##{}", label, id).c_str(), hint,
-        tb.buf.data(), tb.buf.size(), TEXT_SELECTION_FLAGS |
+    // Touch devices have no long-press paste inside these ImGui fields, so
+    // secret fields (API keys) get an explicit Paste button next to the box.
+    const bool pasteBtn = uiMobile() && secret;
+    float pasteW = 0.f;
+    if (pasteBtn)
+        pasteW = ImGui::CalcTextSize("Paste").x +
+                 ImGui::GetStyle().FramePadding.x * 2.f;
+    float boxW = std::min(dp(280.f), ImGui::GetContentRegionAvail().x);
+    if (pasteBtn)
+        boxW = std::min(boxW, std::max(dp(80.f),
+            ImGui::GetContentRegionAvail().x - pasteW -
+            ImGui::GetStyle().ItemSpacing.x));
+    ImGui::SetNextItemWidth(boxW);
+    // With a paste button the label is drawn after it, so hide the input's own.
+    ImGui::InputTextWithHint(
+        pasteBtn ? fmt::format("##{}", id).c_str()
+                 : fmt::format("{}##{}", label, id).c_str(),
+        hint, tb.buf.data(), tb.buf.size(), TEXT_SELECTION_FLAGS |
         (secret ? ImGuiInputTextFlags_Password : ImGuiInputTextFlags_None),
         textSelectionCallback);
     tb.editing = ImGui::IsItemActive();
     tipIfHovered(tip);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    bool commit = ImGui::IsItemDeactivatedAfterEdit();
+    if (pasteBtn) {
+        ImGui::SameLine();
+        if (ImGui::Button(fmt::format("Paste##paste-{}", id).c_str())) {
+            std::string clip = geode::utils::clipboard::read();
+            // keys never have surrounding whitespace / newlines
+            size_t a = clip.find_first_not_of(" \t\r\n");
+            size_t b = clip.find_last_not_of(" \t\r\n");
+            clip = (a == std::string::npos) ? std::string()
+                                            : clip.substr(a, b - a + 1);
+            if (!clip.empty()) {
+                snprintf(tb.buf.data(), tb.buf.size(), "%s", clip.c_str());
+                tb.editing = false;
+                commit = true;
+            }
+        }
+        tipIfHovered("Paste from the clipboard (replaces what's in the box).");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label);
+    }
+    if (commit) {
         editoraiSetStr(id.c_str(), tb.buf.data());
         if (autoBypass && tb.buf[0]) {
             editoraiSetBool("bypass-char-filter", true);
